@@ -1,0 +1,1450 @@
+---
+title: "DataCleaning and Analysis"
+output: html_document
+date: 07/19/2024
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(scipen = 200)
+library(haven)
+library(dplyr)
+library(tidyr)
+library(tidyverse)
+```
+
+## Clean data
+
+### Clean DHEC Cases Data Set
+
+```{r}
+## read SAS dataset
+DHEC_cases <- read_sas('D:\\OneDrive - University of South Carolina\\Research\\N3C\\APHA - Non-AIDS related cancer\\SAS code\\Data\\NADC\\li_dhec_cases0821.sas7bdat')
+```
+
+```{r}
+# clean the cases dataset
+DHEC_cases_clean <- DHEC_cases %>%
+    mutate(
+        # get AIDS/HIV diagnosis year
+        AIDS_DX_year = as.numeric(substr(DATE_OF_AIDS_DX, 1, 4)),
+        HIV_DX_year = as.numeric(substr(DATE_OF_HIV_DX, 1, 4)),
+        
+        # get AIDS/HIV diagnosis month
+        AIDS_DX_month = substr(DATE_OF_AIDS_DX, 5, 6),
+        HIV_DX_month = substr(DATE_OF_HIV_DX, 5, 6),
+        
+        # if no month, set to '06'
+        AIDS_DX_month = ifelse(AIDS_DX_month == '..', '06', AIDS_DX_month),
+        HIV_DX_month = ifelse(HIV_DX_month == '..', '06', HIV_DX_month),
+        
+        # format
+        AIDS_DX_month = as.numeric(AIDS_DX_month),
+        HIV_DX_month = as.numeric(HIV_DX_month),
+        
+        # use earlier diagnosis time as the dx_yr and dx_mth
+        dx_yr = ifelse(is.na(AIDS_DX_year) & !is.na(HIV_DX_year),HIV_DX_year,
+                 ifelse(!is.na(AIDS_DX_year) & is.na(HIV_DX_year),AIDS_DX_year,
+                  ifelse(AIDS_DX_year + AIDS_DX_month / 12 < HIV_DX_year + HIV_DX_month / 12, AIDS_DX_year, HIV_DX_year))),
+        dx_mth = ifelse(is.na(AIDS_DX_month) & !is.na(HIV_DX_month),HIV_DX_month,
+                       ifelse(!is.na(AIDS_DX_month) & is.na(HIV_DX_month),AIDS_DX_month,
+                        ifelse(AIDS_DX_year + AIDS_DX_month / 12 < HIV_DX_year + HIV_DX_month / 12, AIDS_DX_month, HIV_DX_month))),
+        
+        # set death time
+        d_yr = as.numeric(substr(DEATH_HARS, 1, 4)),
+        d_mth = as.numeric(substr(DEATH_HARS, 5, 6))
+    ) %>%
+    
+    # select useful variables
+    select(-c(BIRTH_HARS, DATE_OF_HIV_DX, AIDS_DX_year, HIV_DX_year, AIDS_DX_month, HIV_DX_month)) %>%
+    
+    # remove nonsense observations (die before diagnosis)
+    filter(is.na(d_yr) | is.na(dx_yr) | (d_yr + d_mth / 12 >= dx_yr + dx_mth / 12)) %>%
+    
+    mutate(
+        # set age group
+        age = ifelse(is.na(AGE_AT_AIDS_DX), AGE_AT_HIV_DX, AGE_AT_AIDS_DX),
+        agegp = cut(age, breaks = c(0, 30, 40, 50, 60, 150), include.lowest = T,
+                    labels = c('[18,30)','[30,40)','[40,50)','[50,60)','[60,.)')),
+        
+        # set sex
+        sex = as.factor(SEX_HARS),
+        
+        # set race
+        race = as.factor(ifelse(RACE_HARS %in% c('Black', 'White', 'Hisp'), RACE_HARS, 'Others')),
+        
+        # set risk
+        risk = case_when(RISK_HARS %in% c('01) MSM') ~ 'MSM',
+                         RISK_HARS %in% c('02) Injecting Drug Use', '03) MSM/Injecting Drug Use') ~ 'Injecting',
+                         RISK_HARS %in% c("05) Heterosexual") ~ "Heterosexual"),
+        risk = as.factor(ifelse(is.na(risk), 'Others', risk))
+        ) %>%
+    
+    # select useful variables
+    select(-c(AGE_AT_AIDS_DX, AGE_AT_HIV_DX, SEX_HARS, RACE_HARS, RISK_HARS)) %>%
+    
+    mutate(
+        # get counties
+        COUNTY_AT_AIDS_DX = ifelse(COUNTY_AT_AIDS_DX == '', COUNTY_AT_HIV_DX, COUNTY_AT_AIDS_DX),
+        county = COUNTY_AT_AIDS_DX,
+        
+        # format
+        county = ifelse(COUNTY_AT_AIDS_DX == '*AIKEN CO.', 'AIKEN CO.',
+                  ifelse(COUNTY_AT_AIDS_DX == 'ALLEN CO.', 'ALLENDALE CO.',
+                   ifelse(COUNTY_AT_AIDS_DX %in% c('******BERKELEY CO','*BERKELEY'), 'BERKELEY CO.',
+                    ifelse(COUNTY_AT_AIDS_DX %in% c('**CHARLESTON','*CHARLESTON','*CHARLESTON C',
+                                                    'CHARLES CO.', '***CHARLESTON'), 'CHARLESTON CO.',
+                     ifelse(COUNTY_AT_AIDS_DX == '*DARLINGTON', 'DARLINGTON CO.',
+                      ifelse(COUNTY_AT_AIDS_DX %in% c('*****************DOR','*****DORCHESTER C',
+                                                      '*DORCHESTER C','***DORCHESTER C'), 'DORCHESTER CO.',
+                       ifelse(COUNTY_AT_AIDS_DX %in% c('*GREENVILLE','GRANVILLE CO.',
+                                                       'GREEN CO.','GREENE CO.'), 'GREENVILLE CO.',
+                        ifelse(COUNTY_AT_AIDS_DX %in% c('*GREENWOOD','*GREENWOOD C'), 'GREENWOOD CO.',
+                         ifelse(COUNTY_AT_AIDS_DX == 'HAMPTON (CITY) CO.', 'HAMPTON CO.',
+                          ifelse(COUNTY_AT_AIDS_DX == '*LANCASTER C', 'LANCASTER CO.',
+                           ifelse(COUNTY_AT_AIDS_DX %in% c('*LEXINGTON C','*LEXINGTON CO.'), 'LEXINGTON CO.',
+                            ifelse(COUNTY_AT_AIDS_DX == 'MARIN CO.', 'MARION CO.',
+                             ifelse(COUNTY_AT_AIDS_DX %in% c('*ORANGEBUR','ORANGE CO.','*ORANGEBURG C'), 'ORANGEBURG CO.',
+                              ifelse(COUNTY_AT_AIDS_DX %in% c('*RICHLAND C','*RICHLAND CO',
+                                                              '*RICHLAND CO.','***********RICHLAND',
+                                                              '**********RICHLAND C'), 'RICHLAND CO.',
+                               ifelse(COUNTY_AT_AIDS_DX == '*SPARTANBURG', 'SPARTANBURG CO.',
+                                ifelse(COUNTY_AT_AIDS_DX == '*SUMTER CO', 'SUMTER CO.',
+                                 ifelse(COUNTY_AT_AIDS_DX == 'WILL CO.', 'WILLIAMSBURG CO.',
+                                  ifelse(COUNTY_AT_AIDS_DX %in% c('ABBEVILLE CO.','AIKEN CO.','ALLENDALE CO.',
+                                                                  'ANDERSON CO.','BAMBERG CO.','BARNWELL CO.',
+                                                                  'BEAUFORT CO.','BERKELEY CO.', 'CALHOUN CO.',
+                                                                  'CHARLESTON CO.','CHEROKEE CO.','CHESTER CO.',
+                                                                  'CHESTERFIELD CO.','CLARENDON CO.','COLLETON CO.',
+                                                                  'DARLINGTON CO.', 'DILLON CO.','DORCHESTER CO.',
+                                                                  'EDGEFIELD CO.','FAIRFIELD CO.','FLORENCE CO.',
+                                                                  'GEORGETOWN CO.','GREENVILLE CO.','GREENWOOD CO.',
+                                                                  'HAMPTON CO.','HORRY CO.','JASPER CO.','KERSHAW CO.',
+                                                                  'LANCASTER CO.','LAURENS CO.','LEE CO.','LEXINGTON CO.',
+                                                                  'MCCORMICK CO.', 'MARION CO.','MARLBORO CO.',
+                                                                  'NEWBERRY CO.','OCONEE CO.','ORANGEBURG CO.',
+                                                                  'PICKENS CO.','RICHLAND CO.','SALUDA CO.','SPARTANBURG CO.',
+                                                                  'SUMTER CO.','UNION CO.','WILLIAMSBURG CO.','YORK CO.'),
+                                         COUNTY_AT_AIDS_DX, 'Others/Unknown'))))))))))))))))))
+    ) %>%
+    
+    # select useful variables
+    select(-c(COUNTY_AT_HIV_DX, COUNTY_AT_AIDS_DX))
+
+# get region using county variables
+region <- c()
+for (i in 1:nrow(DHEC_cases_clean)) {
+    # only use the first word to judge
+    county_abbr <- strsplit(DHEC_cases_clean$county[i], split = ' ')[[1]][1]
+    # Rural
+    if (county_abbr %in% toupper(c('Abbeville','Allendale', 'Bamberg', 'Barnwell', 'Cherokee',
+                                   'Chesterfield', 'Clarendon', 'Colleton', 'Dillon', 'Georgetown', 
+                                   'Greenwood', 'Hampton', 'Lee', 'Marion', 'Marlboro', 'McCormick',
+                                   'Newberry', 'Oconee', 'Orangeburg', 'Williamsburg'))) {
+        region <- c(region, 'Rural')
+    }
+    # Others or Unknown
+    else if (county_abbr == 'Others/Unknown') {
+        region <- c(region, 'Others/Unknown')
+    }
+    # Urban
+    else {
+        region <- c(region, 'Urban')
+    }
+}
+
+# append
+DHEC_cases_clean$region <- region
+
+DHEC_cases_clean <- DHEC_cases_clean %>%
+  # generage dummy variables for LSTM
+  mutate(
+    agegp_30_40 = as.numeric(agegp == '[30,40)'),
+    agegp_40_50 = as.numeric(agegp == '[40,50)'),
+    agegp_50_60 = as.numeric(agegp == '[50,60)'),
+    agegp_60_130 = as.numeric(agegp == '[60,.)'),
+    sex_male = as.numeric(sex == 'M'),
+    race_white = as.numeric(race == 'White'),
+    race_other = as.numeric(race == 'Others'),
+    risk_MSM = as.numeric(risk == 'MSM'),
+    risk_inj = as.numeric(risk == "Injecting"),
+    risk_other = as.numeric(risk == 'Others'),
+    region_rural = as.numeric(region == 'Rural'),
+    region_other = as.numeric(region == 'Others/Unknown')
+  ) %>% 
+
+  # select useful dataset
+  select(-c(CURRENT_COUNTY, CURRENT_STATE, HIV_CATEG, STATE_OF_AIDX_DX, STATE_OF_HIV_DX, DHEC_LINKER)) %>%
+  distinct()
+
+rm(county_abbr,i,region)
+save(DHEC_cases_clean, file = "DHEC_cases_clean.rda")
+load("DHEC_cases_clean.rda")
+DHEC_cases_clean
+```
+
+### Clean DHEC Tests Data Set
+
+```{r}
+## read SAS dataset
+DHEC_tests <- read_sas('D:\\OneDrive - University of South Carolina\\Research\\N3C\\APHA - Non-AIDS related cancer\\SAS code\\Data\\NADC\\li_dhec_tests0821.sas7bdat')
+```
+
+#### DHEC Tests CD4 Data Set
+
+```{r}
+# Clean the DHEC test CD4 dataset
+DHEC_tests_CD4 <- DHEC_tests %>%
+    # select useful columns
+    select(RFA_ID, TEST, TEST_RESULTS, RESULT_INTERPRETATION, TESTDATE, TIME_DXDATE_TESTDATE) %>%
+    # Test should be 'VL', Test results should not be empty, Time should be > 0
+    filter(TEST_RESULTS != '',
+           TIME_DXDATE_TESTDATE >= 0,
+           TEST == 'CD4#') %>%
+    # change data format
+    mutate(CD4 = as.numeric(TEST_RESULTS)) %>%
+    # select useful columns
+    select(RFA_ID, TIME_DXDATE_TESTDATE, RESULT_INTERPRETATION, CD4) %>%
+    # arrange
+    arrange(RFA_ID, TIME_DXDATE_TESTDATE) %>%
+    # rename
+    rename('CD4_interpretation' = RESULT_INTERPRETATION)
+DHEC_tests_CD4
+```
+
+#### DHEC Tests VL Data Set
+
+```{r}
+# Clean the DHEC test VL dataset
+DHEC_tests_VL <- DHEC_tests %>%
+    # select useful columns
+    select(RFA_ID, TEST, TEST_RESULTS, RESULT_INTERPRETATION, TESTDATE, TIME_DXDATE_TESTDATE) %>%
+    # Test should be 'VL', Test results should not be empty, Time should be > 0
+    filter(TEST_RESULTS != '',
+           TIME_DXDATE_TESTDATE >= 0,
+           TEST == 'VL') %>%
+    # change data format
+    mutate(VL = as.numeric(TEST_RESULTS)) %>%
+    # select useful columns
+    select(RFA_ID, TIME_DXDATE_TESTDATE, RESULT_INTERPRETATION, VL) %>%
+    # arrange
+    arrange(RFA_ID, TIME_DXDATE_TESTDATE) %>%
+    # rename
+    rename('VL_interpretation' = RESULT_INTERPRETATION) %>%
+    
+    # delete unknown VL_interpretation
+    filter(VL_interpretation != 'I',
+           VL_interpretation != '') %>%
+    
+    mutate(
+        # adjust VL_interpretation
+        VL_interpretation = ifelse(VL_interpretation != '=' &
+                                       (VL > 200), '=', VL_interpretation),
+        VL_interpretation = ifelse(VL_interpretation == '>' &
+                                       (VL == 200), '=', VL_interpretation),
+    )
+
+DHEC_tests_VL
+```
+
+### Clean DHEC UB Data Set
+
+#### Comorbidity
+
+```{r, warning=FALSE}
+library(comorbidity)
+
+UB <- read_sas('D:\\OneDrive - University of South Carolina\\Research\\N3C\\APHA - Non-AIDS related cancer\\SAS code\\Data\\NADC\\li_ub_allpayer0821.sas7bdat')
+UB.select <- UB %>% select(c(RFA_ID, ADMD, ADMMTH, ADMYEAR, PDIAG, SDIAG1, SDIAG2, SDIAG3, SDIAG4, SDIAG5, SDIAG6, SDIAG7, SDIAG8, SDIAG9, SDIAG10, SDIAG11, SDIAG12, SDIAG13, SDIAG14, SDIAG10_1, SDIAG10_2, SDIAG10_3, SDIAG10_4, SDIAG10_5, SDIAG10_6, SDIAG10_7, SDIAG10_8, SDIAG10_9, SDIAG10_10, SDIAG10_11, SDIAG10_12, SDIAG10_13, SDIAG10_14)) %>% filter(ADMYEAR != 1960)
+UB.select
+```
+
+```{r }
+UB.ICD9.clean <- UB.select %>%
+  # calculate time from diagnosis to admission
+  left_join(., DHEC_cases_clean, by = 'RFA_ID') %>%
+  select(c(RFA_ID, PDIAG, SDIAG1, SDIAG2, SDIAG3, SDIAG4, SDIAG5, SDIAG6, SDIAG7, SDIAG8, SDIAG9, SDIAG10, SDIAG11, SDIAG12, SDIAG13, SDIAG14, dx_yr, dx_mth, ADMYEAR, ADMMTH)) %>%
+  mutate(time_dx_admission = ADMYEAR * 365.25 + ADMMTH * 30 - dx_yr * 365.25 - dx_mth * 30) %>%
+  arrange(RFA_ID, ADMYEAR, ADMMTH) %>%
+  gather(., key = 'condition', value = 'ICD9', PDIAG:SDIAG14, factor_key = T, na.rm = T) %>%
+  arrange(RFA_ID, ADMYEAR, ADMMTH) %>%
+  filter(ICD9 != '') %>%
+  select(-c(condition)) %>%
+  mutate(group = paste(RFA_ID, ADMYEAR, ADMMTH, sep = '~'))
+
+UB.ICD9.clean
+```
+
+```{r }
+temp.ICD9 <- comorbidity(UB.ICD9.clean, id = 'group', code = 'ICD9', map = 'charlson_icd9_quan', assign0 = FALSE)
+ICD9 <- temp.ICD9 %>% separate(group, c('RFA_ID', 'ADMYEAR', 'ADMMTH'), sep = '~') %>% mutate(RFA_ID = as.numeric(RFA_ID),
+                                                                                              ADMYEAR = as.numeric(ADMYEAR),
+                                                                                              ADMMTH = as.numeric(ADMMTH)) %>% arrange(RFA_ID, ADMYEAR, ADMMTH)
+
+colnames(ICD9)[4:(4+16)] <- paste0(colnames(ICD9)[4:(4+16)], '9')
+ICD9
+```
+
+
+```{r }
+UB.ICD10.clean <- UB.select %>%
+  # calculate time from diagnosis to admission
+  left_join(., DHEC_cases_clean, by = 'RFA_ID') %>%
+  select(c(RFA_ID, SDIAG10_1, SDIAG10_2, SDIAG10_3, SDIAG10_4, SDIAG10_5, SDIAG10_6, SDIAG10_7, SDIAG10_8, SDIAG10_9, SDIAG10_10, SDIAG10_11, SDIAG10_12, SDIAG10_13, SDIAG10_14, dx_yr, dx_mth, ADMYEAR, ADMMTH)) %>%
+  mutate(time_dx_admission = ADMYEAR * 365.25 + ADMMTH * 30 - dx_yr * 365.25 - dx_mth * 30) %>%
+  arrange(RFA_ID, ADMYEAR, ADMMTH) %>%
+  gather(., key = 'condition', value = 'ICD10', SDIAG10_1:SDIAG10_14, factor_key = T, na.rm = T) %>%
+  arrange(RFA_ID, ADMYEAR, ADMMTH) %>%
+  filter(ICD10 != '') %>%
+  select(-c(condition)) %>%
+  mutate(group = paste(RFA_ID, ADMYEAR, ADMMTH, sep = '~'))
+
+UB.ICD10.clean
+```
+
+```{r}
+temp.ICD10 <- comorbidity(UB.ICD10.clean, id = 'group', code = 'ICD10', map = 'charlson_icd10_quan', assign0 = FALSE)
+ICD10 <- temp.ICD10 %>% separate(group, c('RFA_ID', 'ADMYEAR', 'ADMMTH'), sep = '~') %>% mutate(RFA_ID = as.numeric(RFA_ID),
+                                                                                              ADMYEAR = as.numeric(ADMYEAR),
+                                                                                              ADMMTH = as.numeric(ADMMTH)) %>% arrange(RFA_ID, ADMYEAR, ADMMTH)
+
+colnames(ICD10)[4:(4+16)] <- paste0(colnames(ICD10)[4:(4+16)], '10')
+ICD10
+```
+
+```{r}
+ICD <- full_join(ICD9, ICD10, by = c('RFA_ID', 'ADMYEAR', 'ADMMTH'))
+ICD[is.na(ICD)] <- 0
+ICD <- ICD %>%
+  mutate(mi = mi9 | mi10,
+         chf = chf9 | chf10,
+         pvd = pvd9 | pvd10,
+         cevd = cevd9 | cevd10,
+         dementia = dementia9 | dementia10,
+         cpd = cpd9 | cpd10,
+         rheumd = rheumd9 | rheumd10,
+         pud = pud9 | pud10,
+         mld = mld9 | mld10,
+         diab = diab9 | diab10,
+         diabwc = diabwc9 | diabwc10,
+         hp = hp9 | hp10,
+         rend = rend9 | rend10,
+         canc = canc9 | canc10,
+         msld = msld9 | msld10,
+         metacanc = metacanc9 | metacanc10,
+         aids = aids9 | aids10) %>%
+  select(RFA_ID, ADMYEAR, ADMMTH, mi:aids) %>%
+  mutate_if(is.logical, as.numeric) %>%
+  arrange(RFA_ID, ADMYEAR, ADMMTH) %>%
+  distinct()
+ICD %>% filter(RFA_ID == 402) %>% dplyr::select(RFA_ID:ADMMTH, aids)
+```
+
+```{r }
+ICD.combine <- ICD %>%
+  # calculate time from diagnosis to admission
+  left_join(., DHEC_cases_clean, by = 'RFA_ID') %>%
+  dplyr::select(c(RFA_ID:aids, dx_yr, dx_mth)) %>%
+  mutate(time_dx_admission = ADMYEAR * 365.25 + ADMMTH * 30 - dx_yr * 365.25 - dx_mth * 30) %>%
+  select(c(RFA_ID, time_dx_admission, mi:aids))
+ICD.combine
+```
+
+```{r }
+# set time window
+time_window_month <- 12
+time_window_date <- time_window_month * 365/12
+time_window_date_year <- (12/time_window_month) * time_window_date
+```
+
+```{r }
+VLfirsttest <- DHEC_tests_VL %>%
+  group_by(RFA_ID) %>%
+  summarise(min_time_dxdate_testdate = min(TIME_DXDATE_TESTDATE))
+VLfirsttest
+```
+
+```{r }
+ICD.timewindow <- ICD.combine %>%
+  left_join(., VLfirsttest, by = 'RFA_ID') %>%
+    mutate(
+        # calculate what is the index of time window at this time point
+        time_window_index = floor((time_dx_admission - min_time_dxdate_testdate) / time_window_date) + 1,
+        # time_window_index_year for join retention part
+        time_window_index_year = floor((time_dx_admission - min_time_dxdate_testdate) / time_window_date_year) + 1
+        ) %>%
+  distinct(RFA_ID, mi, chf, pvd, cevd, dementia, cpd, rheumd, pud, mld, diab, diabwc, hp, rend, canc, msld, metacanc, aids, time_window_index, time_window_index_year) %>%
+  filter(!is.na(time_window_index))
+
+ICD.timewindow
+```
+
+```{r }
+min <- min(ICD.timewindow$time_window_index)
+max <- max(ICD.timewindow$time_window_index)
+ICD.temp <- data.frame(RFA_ID = rep(unique(ICD.timewindow$RFA_ID), max-min+1),
+                       time_window_index = rep(min:max, length(unique(ICD.timewindow$RFA_ID)))) %>%
+  arrange(RFA_ID, time_window_index) %>%
+  left_join(., ICD.timewindow, by = c('RFA_ID', 'time_window_index'))
+ICD.temp[,3:(3+16)][is.na(ICD.temp[,3:(3+16)])] <- 0
+ICD.temp
+```
+
+```{r }
+ICD.comorbidity <- data.frame()
+index.ami <- which(colnames(ICD.temp) == 'mi')
+
+for (rfa in unique(ICD.temp$RFA_ID)) {
+  temp <- ICD.temp[ICD.temp$RFA_ID == rfa,]
+  for (j in 1:17) {
+    if (sum(temp[,index.ami+j-1] == 1) != 0) {
+      temp[,index.ami+j-1][min(which(temp[,index.ami+j-1] == 1)):nrow(temp)] <- 1
+    }
+  }
+  ICD.comorbidity <- rbind(ICD.comorbidity, temp)
+  if ((nrow(ICD.comorbidity) %% 10000) %in% 1:100) {print(nrow(ICD.comorbidity))}
+}
+```
+
+```{r }
+ICD.comorbidity <- ICD.comorbidity %>% 
+  dplyr::select(-time_window_index_year) %>% 
+  group_by(RFA_ID, time_window_index) %>% 
+  summarize(mi = max(mi),
+            chf = max(chf),
+            pvd = max(pvd),
+            cevd = max(cevd),
+            dementia = max(dementia),
+            cpd = max(cpd),
+            rheumd = max(rheumd),
+            pud = max(pud),
+            mld = max(mld),
+            diab = max(diab),
+            diabwc = max(diabwc),
+            hp = max(hp),
+            rend = max(rend),
+            canc = max(canc),
+            msld = max(msld),
+            metacanc = max(metacanc),
+            aids = max(aids))
+```
+
+```{r }
+save(ICD.comorbidity, file = "ICD.comorbidity.rda")
+```
+
+
+```{r }
+load("ICD.comorbidity.rda")
+load("DHEC_cases_clean.rda")
+ICD.comorbidity.pro <- ICD.comorbidity %>%
+  left_join(., DHEC_cases_clean, by = 'RFA_ID') %>%
+  dplyr::select(RFA_ID:aids, age)
+```
+
+```{r }
+ICD.comorbidity.pro <- ICD.comorbidity.pro %>%
+  group_by(RFA_ID) %>%
+  mutate(age1 = ifelse(age < 18, 18, age)) %>%
+  mutate(
+    mi.cum = cumsum(mi) / age1 / 3,
+    chf.cum = cumsum(chf) / age1 / 3,
+    pvd.cum = cumsum(pvd) / age1 / 3,
+    cevd.cum = cumsum(cevd) / age1 / 3,
+    dementia.cum = cumsum(dementia) / age1 / 3,
+    cpd.cum = cumsum(cpd) / age1 / 3,
+    rheumd.cum = cumsum(rheumd) / age1 / 3,
+    pud.cum = cumsum(pud) / age1 / 3,
+    mld.cum = cumsum(mld) / age1 / 3,
+    diab.cum = cumsum(diab) / age1 / 3,
+    diabwc.cum = cumsum(diabwc) / age1 / 3,
+    hp.cum = cumsum(hp) / age1 / 3,
+    rend.cum = cumsum(rend) / age1 / 3,
+    canc.cum = cumsum(canc) / age1 / 3,
+    msld.cum = cumsum(msld) / age1 / 3,
+    metacanc.cum = cumsum(metacanc) / age1 / 3,
+    aids.cum = cumsum(aids) / age1 / 3
+    ) %>%
+    dplyr::select(-age1)
+ICD.comorbidity.pro
+```
+
+```{r }
+save(ICD.comorbidity.pro, file = "ICD.comorbidity.pro.rda")
+```
+
+#### Mental Health
+
+```{r }
+Mental_health <- read.csv('C:\\Users\\yunqing\\OneDrive - University of South Carolina\\RO1_shared_folder\\Codes\\mental_health.csv',
+                          colClasses = c(ICD9 = 'character', ICD10 = 'character'))
+Mental_health <- Mental_health %>% 
+  mutate(ICD9 = gsub('[.]', '', ICD9),
+         ICD10 = gsub('[.]', '', ICD10))
+Mental_health$Diagnosis <- paste0(Mental_health$Diagnosis, 1:55)
+Mental_health
+```
+
+```{r }
+UB.ICD9.mental <- UB.ICD9.clean
+
+for (i in 1:nrow(Mental_health)) {
+  if (Mental_health$ICD9[i] != ''){
+    UB.ICD9.mental[Mental_health$Diagnosis[i]] <- startsWith(UB.ICD9.clean$ICD9, Mental_health$ICD9[i])
+  }
+}
+
+UB.ICD9.mental <- UB.ICD9.mental %>%
+  mutate(Depression = as.numeric(Depression1 | Depression2),
+         Anxiety = as.numeric(Anxiety3 | Anxiety4),
+         `Psychiatric disorder` = as.numeric(`Psychiatric disorder6` | `Psychiatric disorder7` | `Psychiatric disorder8` |
+                                               `Psychiatric disorder9` | `Psychiatric disorder10` | `Psychiatric disorder11` | 
+                                               `Psychiatric disorder12` | `Psychiatric disorder13` | `Psychiatric disorder14` | 
+                                               `Psychiatric disorder15` | `Psychiatric disorder16`),
+         `Alcohol use` = as.numeric(`Alcohol use17` | `Alcohol use18` | `Alcohol use19` | `Alcohol use20` |
+                                      `Alcohol use21` | `Alcohol use22` | `Alcohol use23` | `Alcohol use25`),
+         `Tobacco use` = as.numeric(`Tobacco use26`),
+         `Illicit drug use` = as.numeric(`Illicit drug use28` | `Illicit drug use29` | `Illicit drug use30` |
+                                           `Illicit drug use31` | `Illicit drug use32` | `Illicit drug use33` |
+                                           `Illicit drug use34` | `Illicit drug use35` | `Illicit drug use36` |
+                                           `Illicit drug use37` | `Illicit drug use38` | `Illicit drug use39` |
+                                           `Illicit drug use40` | `Illicit drug use41` | `Illicit drug use42` | 
+                                           `Illicit drug use43` | `Illicit drug use44` | `Illicit drug use45` |
+                                           `Illicit drug use46` | `Illicit drug use47` | `Illicit drug use48` | 
+                                           `Illicit drug use49` | `Illicit drug use50` | `Illicit drug use51` | 
+                                           `Illicit drug use52` | `Illicit drug use53` | `Illicit drug use54` |
+                                           `Illicit drug use55`)) %>%
+  dplyr::select(RFA_ID, ADMYEAR, ADMMTH, time_dx_admission, Depression, Anxiety, `Psychiatric disorder`,
+                `Alcohol use`, `Tobacco use`, `Illicit drug use`)
+
+UB.ICD9.mental
+```
+
+```{r }
+UB.ICD10.mental <- UB.ICD10.clean
+
+for (i in 1:nrow(Mental_health)) {
+  if (Mental_health$ICD10[i] != ''){
+    UB.ICD10.mental[Mental_health$Diagnosis[i]] <- startsWith(UB.ICD10.clean$ICD10, Mental_health$ICD10[i])
+  }
+}
+
+UB.ICD10.mental <- UB.ICD10.mental %>%
+  mutate(Depression = as.numeric(Depression1),
+         Anxiety = as.numeric(Anxiety3 | Anxiety4 | Anxiety5),
+         `Psychiatric disorder` = as.numeric(`Psychiatric disorder6` | `Psychiatric disorder12` |
+                                               `Psychiatric disorder13` | `Psychiatric disorder14` | 
+                                               `Psychiatric disorder15` | `Psychiatric disorder16`),
+         `Alcohol use` = as.numeric(`Alcohol use17` | `Alcohol use18` | `Alcohol use19` | `Alcohol use20` |
+                                      `Alcohol use21` | `Alcohol use22` | `Alcohol use23` | `Alcohol use24` | `Alcohol use25`),
+         `Tobacco use` = as.numeric(`Tobacco use26` | `Tobacco use27`),
+         `Illicit drug use` = as.numeric(`Illicit drug use28` | `Illicit drug use29` | `Illicit drug use30` |
+                                           `Illicit drug use31` | `Illicit drug use32` | `Illicit drug use33`)) %>%
+  dplyr::select(RFA_ID, ADMYEAR, ADMMTH, time_dx_admission, Depression, Anxiety, `Psychiatric disorder`,
+                `Alcohol use`, `Tobacco use`, `Illicit drug use`)
+
+UB.ICD10.mental
+```
+
+```{r }
+ICD.mental <- full_join(UB.ICD9.mental, UB.ICD10.mental, by = c('RFA_ID', 'ADMYEAR', 'ADMMTH', 'time_dx_admission')) %>% arrange(RFA_ID, ADMYEAR, ADMMTH)
+ICD.mental[is.na(ICD.mental)] <- 0
+
+ICD.mental.combine <- ICD.mental %>%
+  mutate(Depression = Depression.x | Depression.y,
+         Anxiety = Anxiety.x | Anxiety.y,
+         `Psychiatric disorder` = `Psychiatric disorder.x` | `Psychiatric disorder.y`,
+         `Alcohol use` = `Alcohol use.x` | `Alcohol use.y`,
+         `Tobacco use` = `Tobacco use.x` | `Tobacco use.y`,
+         `Illicit drug use` = `Illicit drug use.x` | `Illicit drug use.y`) %>%
+  dplyr::select(RFA_ID, ADMYEAR, ADMMTH, time_dx_admission, Depression, Anxiety, `Psychiatric disorder`,
+                `Alcohol use`, `Tobacco use`, `Illicit drug use`) %>%
+  mutate_if(is.logical, as.numeric)
+
+ICD.mental.combine
+```
+
+```{r }
+ICD.mental.timewindow <- ICD.mental.combine %>%
+  left_join(., VLfirsttest, by = 'RFA_ID') %>%
+    mutate(
+        # calculate what is the index of time window at this time point
+        time_window_index = floor((time_dx_admission - min_time_dxdate_testdate) / time_window_date) + 1,
+        # time_window_index_year for join retention part
+        time_window_index_year = floor((time_dx_admission - min_time_dxdate_testdate) / time_window_date_year) + 1
+        ) %>%
+  distinct(RFA_ID, Depression, Anxiety, `Psychiatric disorder`, `Alcohol use`, `Tobacco use`, 
+           `Illicit drug use`, time_window_index, time_window_index_year) %>%
+  filter(!is.na(time_window_index))
+
+ICD.mental.timewindow
+```
+
+```{r }
+min <- min(ICD.timewindow$time_window_index)
+max <- max(ICD.timewindow$time_window_index)
+ICD.mental <- data.frame(RFA_ID = rep(unique(ICD.timewindow$RFA_ID), max-min+1),
+                       time_window_index = rep(min:max, length(unique(ICD.timewindow$RFA_ID)))) %>%
+  arrange(RFA_ID, time_window_index) %>%
+  left_join(., ICD.mental.timewindow, by = c('RFA_ID', 'time_window_index'))
+ICD.mental[is.na(ICD.mental)] <- 0
+ICD.mental
+```
+
+```{r }
+ICD.mental <- ICD.mental %>% 
+  select(-time_window_index_year) %>% 
+  group_by(RFA_ID,time_window_index) %>% 
+  summarise(
+    Depression = max(Depression),
+    Anxiety = max(Anxiety),
+    `Psychiatric disorder` = max(`Psychiatric disorder`),
+    `Alcohol use` = max(`Alcohol use`),
+    `Tobacco use` = max(`Tobacco use`),
+    `Illicit drug use` = max(`Illicit drug use`)
+  )
+```
+
+
+```{r }
+save(ICD.mental, file = "ICD.mental.rda")
+```
+
+### RO1 Pattern Analysis Variable Definitions
+
+#### Socio-demographics
+
+```{r}
+# Var I-1: Age
+# Var I-2: Sex
+# Var I-3: Race
+# Var I-4: Risk group
+# Var I-5: Residential type
+DHEC_cases_clean_demo <- DHEC_cases_clean %>% 
+    select(RFA_ID,dx_yr,dx_mth,age,sex,sex_male,race,race_white,race_other,risk,
+           risk_MSM,risk_other,region,region_rural,region_other)
+```
+
+#### Baseline HIV markers
+
+```{r}
+DHEC_tests_baseline <- DHEC_cases_clean %>% select(RFA_ID) %>% arrange(RFA_ID)
+  
+# Var II-1: Initial CD4 count
+DHEC_tests_baseline <- DHEC_tests_CD4 %>% 
+    select(-TIME_DXDATE_TESTDATE) %>% 
+    group_by(RFA_ID) %>% 
+    distinct(RFA_ID,.keep_all = T) %>% 
+    rename('CD4_baseline_interpretation' = CD4_interpretation,'CD4_baseline' = CD4) %>% 
+    left_join(DHEC_tests_baseline,.,by = 'RFA_ID')
+
+# Var II-2: Initial VL
+DHEC_tests_baseline <- DHEC_tests_VL %>% 
+    select(-TIME_DXDATE_TESTDATE) %>% 
+    group_by(RFA_ID) %>% 
+    distinct(RFA_ID,.keep_all = T) %>% 
+    rename('VL_baseline_interpretation' = VL_interpretation,'VL_baseline' = VL) %>% 
+    left_join(DHEC_tests_baseline,.,by=c('RFA_ID'))
+    
+
+# Var II-3: AIDS
+DHEC_tests_baseline <- DHEC_cases_clean %>% 
+    mutate(AIDS = ifelse(!is.na(DATE_OF_AIDS_DX),1,0)) %>% 
+    select(RFA_ID,AIDS) %>% 
+    left_join(DHEC_tests_baseline,.,by='RFA_ID')
+```
+
+#### VL indicators
+
+```{r}
+# Aggregate VL in time window
+time_window_month <- 12
+time_window_date <- time_window_month * 365/12
+time_window_date_year <- (12/time_window_month) * time_window_date
+
+# see time range for each RFA_ID
+VL_summarize <- DHEC_tests_VL %>%
+    group_by(RFA_ID) %>%
+    summarize(
+        # calculate time range for each RFA_ID: to decide the number of time windows collected
+        time_range_date = max(TIME_DXDATE_TESTDATE) - min(TIME_DXDATE_TESTDATE),
+        time_range_window = ceiling(time_range_date / time_window_date),
+        # calculate minimum time_dx_date_testdate for further calculation
+        min_time_dxdate_testdate = min(TIME_DXDATE_TESTDATE),
+        )
+
+VL_index <- DHEC_tests_VL %>%
+    # join the data frames
+    left_join(., VL_summarize, by = 'RFA_ID') %>%
+    mutate(
+        # calculate what is the index of time window at this time point
+        time_window_index = floor((TIME_DXDATE_TESTDATE - min_time_dxdate_testdate) / time_window_date) + 1,
+        # time_window_index_year for join retention part
+        time_window_index_year = floor((TIME_DXDATE_TESTDATE - min_time_dxdate_testdate) / time_window_date_year) + 1,
+        # change VL_interpretation into numeric variable
+        VL_interpretation_numeric = ifelse(VL_interpretation == '=', 1, 0),
+        )
+VL_join <- VL_index %>%
+    group_by(RFA_ID, time_window_index) %>%
+    summarize(
+        # get mean TIME_DXDATE_TESTDATE for each time window
+        TIME_DXDATE_TESTDATE_avg = mean(TIME_DXDATE_TESTDATE),
+        # get TIME_DXDATE_TESTDATE of max VL for each time window
+        TIME_DXDATE_TESTDATE_max = TIME_DXDATE_TESTDATE[which(VL==max(VL))],
+        # get mean VL for each time window
+        VL_avg = mean(VL),
+        # get maximum VL for each time window
+        VL_max = max(VL),
+        # get interpretation for VL_avg: if at least one of the VL_interpretation is '<', then VL_avg_interpretation_numeric = 0
+        VL_avg_interpretation_numeric = prod(VL_interpretation_numeric),
+        # get interpretation for VL_max: if at least one of the VL_interpretation is '=', then VL_max_interpretation_numeric = 1
+        VL_max_interpretation_numeric = 1 - prod(1 - VL_interpretation_numeric),
+        ) %>%
+    # join the data frames by RFA_ID and time_widow_index
+    left_join(VL_index, ., by = c('RFA_ID' = 'RFA_ID', 'time_window_index' = 'time_window_index')) %>%
+    mutate(
+        # transform back into '=' and '<'
+        VL_avg_interpretation = ifelse(VL_avg_interpretation_numeric == 1, '=', '<'),
+        VL_max_interpretation = ifelse(VL_max_interpretation_numeric == 1, '=', '<'),
+        ) %>%
+    # get distinct RFA_ID and time_window_index
+    distinct(RFA_ID, time_window_index, .keep_all = T) %>%
+    # delete some variables that will not be used
+    select(RFA_ID, TIME_DXDATE_TESTDATE_avg,TIME_DXDATE_TESTDATE_max,
+           time_range_window, time_window_index,time_window_index_year,
+           VL_avg_interpretation, VL_avg, VL_max_interpretation, VL_max)
+
+# Select what we need (for average VL)
+DHEC_tests_VL_window <- VL_join %>% 
+    select(RFA_ID,TIME_DXDATE_TESTDATE_avg,time_window_index,time_window_index_year,
+           VL_avg_interpretation,VL_avg) %>% 
+    rename('TIME_DXDATE_TESTDATE' = TIME_DXDATE_TESTDATE_avg,'VL_interpretation' = VL_avg_interpretation,'VL' = VL_avg)
+
+# # (for max VL)
+# DHEC_tests_VL_window <- VL_join %>% 
+#     select(RFA_ID,TIME_DXDATE_TESTDATE_max,time_window_index,VL_max_interpretation,VL_max) %>% 
+#     rename('VL_interpretation' = VL_max_interpretation,'VL' = VL_max)
+```
+
+```{r}
+# newly added variable: n_visits
+DHEC_tests_VL_CD4 <- DHEC_tests %>%
+    # Test should be 'VL', Test results should not be empty, Time should be > 0
+    filter(TEST_RESULTS != '',
+           TIME_DXDATE_TESTDATE >= 0,
+           TEST %in% c('VL'),
+           RESULT_INTERPRETATION != 'I',
+           RESULT_INTERPRETATION != '') %>%
+  rbind(DHEC_tests %>%
+    filter(TEST_RESULTS != '',
+           TIME_DXDATE_TESTDATE >= 0,
+           TEST %in% c('CD4#'))) %>%
+    # select useful columns
+    select(RFA_ID, TIME_DXDATE_TESTDATE, TEST, TEST_RESULTS) %>%
+  arrange(RFA_ID, TIME_DXDATE_TESTDATE,desc(TEST)) %>%
+  group_by(RFA_ID) %>% 
+  mutate(
+    judge_VL = TEST=='VL',
+    judge_VL_cum = cumsum(judge_VL)
+  ) %>% 
+  filter(judge_VL_cum != 0)
+
+
+# see time range for each RFA_ID
+VL_CD4_summarize <- DHEC_tests_VL_CD4 %>%
+    group_by(RFA_ID) %>%
+    summarize(
+        # calculate time range for each RFA_ID: to decide the number of time windows collected
+        time_range_date = max(TIME_DXDATE_TESTDATE) - min(TIME_DXDATE_TESTDATE),
+        time_range_window = ceiling(time_range_date / time_window_date),
+        # calculate minimum time_dx_date_testdate for further calculation
+        min_time_dxdate_testdate = min(TIME_DXDATE_TESTDATE),
+        )
+
+data_visits <- DHEC_tests_VL_CD4 %>%
+    # join the data frames
+    left_join(., VL_CD4_summarize, by = 'RFA_ID') %>%
+    mutate(
+        # calculate what is the index of time window at this time point
+        time_window_index = floor((TIME_DXDATE_TESTDATE - min_time_dxdate_testdate) / time_window_date) + 1,
+        # time_window_index_year for join retention part
+        time_window_index_year = floor((TIME_DXDATE_TESTDATE - min_time_dxdate_testdate) / time_window_date_year) + 1
+        ) %>%
+  group_by(RFA_ID,time_window_index) %>% 
+  summarise(visits = length(RFA_ID))
+  
+```
+
+
+```{r}
+# rm(VL_index,VL_join,VL_summarize,time_window_date,time_window_month,time_window_date_year)
+# rm(DHEC_tests_VL_CD4,VL_CD4_summarize)
+```
+
+```{r}
+# calculate VL-related variables
+
+# define cutoff
+# meas_lower_bound <- 200
+cutoff_VS <- 200
+cutoff_VR <- cutoff_VS
+cutoff_VR2 <- 1000
+cutoff_VB_lower <- cutoff_VS
+cutoff_VB_upper <- 500
+cutoff_proptime <- 500
+
+DHEC_tests_VL_window_cal <- DHEC_tests_VL_window %>% 
+    group_by(RFA_ID) %>% 
+    # Var III-1: Viral Suppression (VS)
+    mutate(VS = ifelse(VL < cutoff_VS | 
+                        (VL == cutoff_VS & VL_interpretation == '<'),1,0)) %>% 
+    
+    # Var III-2: Viral Rebound (VR)
+    mutate(
+        VL_judge = ifelse(VL > cutoff_VR | 
+                              (VL == cutoff_VR & VL_interpretation == '='),1,0),
+        VL_judge2 = ifelse(VL >= cutoff_VR2,1,0),
+        VL_judge_lag = lag(VL_judge),
+        VL_judge_lead = lead(VL_judge),
+        VS_sum = cumsum(VS),
+        # define VR: only when 
+        #     1. VS_sum > 0 (experience viral suppression before)
+        #     2. 
+        #     case 1: 
+        #       a. VL_judge = 1 (current VL >= cutoff_VR)
+        #       b. last VL >= cutoff_VR or next VL >= cutoff_VR or next VL = NA (last or next VL also >= cutoff_VR or it is the last measurement
+        #     case 2:
+        #       a. VL_judge2 = 1 (current VL >= cutoff_VR2)
+        VR = ifelse(
+            VS_sum > 0 &
+            (VL_judge == 1 & (VL_judge_lag == 1 | VL_judge_lead == 1 | is.na(VL_judge_lead)) |
+             VL_judge2 == 1),1,0),
+        VR = ifelse(is.na(VR),0,VR) # if the first visit, this VB may is NA, if so, set to 0
+    ) %>% 
+    select(-c(VL_judge,VL_judge2,VL_judge_lag,VL_judge_lead)) %>% 
+
+    # Var III-3: Viral Blip (VB)
+    mutate(
+        VL_judge = ifelse((VL > cutoff_VB_lower | (VL == cutoff_VB_lower & VL_interpretation == '=')) &
+                              VL < cutoff_VB_upper,1,0),
+        VS_lag = lag(VS),
+        VS_lead = lead(VS),
+        # define VB: only when
+        # 1. VS_sum > 0 (experience viral suppression before)
+        # 2. VL_judge = 1
+        # 3. both VS_lag = 1 AND VS_lead = 1) (both last and next are suppression)
+        # 4. not the first or last measurement (automatically satisfy because at the boundary, either VS_lag or VS_lead is NA)
+        VB = ifelse(
+            VS_sum > 0 &
+            VL_judge == 1 &
+            VS_lag == 1 &
+            VS_lead == 1, 1, 0),
+        VB = ifelse(is.na(VB),0,VB) # at boundary, set to 0
+    ) %>% 
+    select(-c(VL_judge,VS_lag,VS_lead)) %>% 
+
+     # Var III-4: Months to initial VS
+     mutate(Months_to_ini_VS = ifelse(sum(VS_sum)==0,Inf,
+                             TIME_DXDATE_TESTDATE[which(VS_sum==1)[1]]/30))
+    
+    # Var III-5: Number of VR
+        # summary the number of VR at distinct ID and VS_sum
+    temp <- DHEC_tests_VL_window_cal %>% group_by(RFA_ID,VS_sum) %>% 
+        summarise(N=as.numeric(sum(VR)>0)) %>% 
+        group_by(RFA_ID) %>% mutate(VR_N=cumsum(N)) %>% select(-N)
+DHEC_tests_VL_window_cal <- DHEC_tests_VL_window_cal %>% 
+    left_join(temp,by=c('RFA_ID','VS_sum'))
+        # some points where VS = 1 should -1
+temp <- DHEC_tests_VL_window_cal %>% ungroup(RFA_ID) %>% mutate(i=1:nrow(.)) %>% 
+    group_by(RFA_ID,VR_N) %>% summarise(index=head(i,1)) %>% filter(VR_N>0)
+DHEC_tests_VL_window_cal$VR_N[temp$index] <- DHEC_tests_VL_window_cal$VR_N[temp$index] - 1
+rm(temp)
+
+DHEC_tests_VL_window_cal <- DHEC_tests_VL_window_cal %>% 
+    
+    # Var III-6: Size of the highest VB
+    mutate(VRxVRN = VR * VR_N) %>% 
+    group_by(RFA_ID,VRxVRN) %>% 
+    mutate(
+        VR_size = max(VL) * VR,
+        VR_size = case_when(
+            VR_size < 200 ~ 'none',
+            200 <= VR_size & VR_size < 500 ~ '200-500',
+            500 <= VR_size & VR_size < 1000 ~ '500-1000',
+            1000 <= VR_size & VR_size <= 10000 ~ '1000-10000',
+            VR_size > 10000 ~ '>10000'
+        ),
+        VR_size_200_500 = as.numeric(VR_size == '200-500'),
+        VR_size_500_1000 = as.numeric(VR_size == '500-1000'),
+        VR_size_1000_10000 = as.numeric(VR_size == '1000-10000'),
+        VR_size_10000 = as.numeric(VR_size == '>10000')
+    ) %>% 
+    ungroup() %>% select(-VRxVRN)
+  
+# Var III-7: Proportion of time with VL <= cutoff_proptime (up to time t)
+DHEC_tests_VL_window_cal <- DHEC_tests_VL_window_cal %>% 
+  group_by(RFA_ID) %>% 
+  slice(c(1,n())) %>% bind_rows(DHEC_tests_VL_window_cal) %>% 
+  arrange(RFA_ID,TIME_DXDATE_TESTDATE) %>% 
+  mutate(VL_judge = ifelse(VL <= cutoff_proptime,1,0)) %>% 
+  mutate(
+    TIME_DXDATE_TESTDATE = ifelse(row_number() == 1,0,TIME_DXDATE_TESTDATE),
+    TIME_DXDATE_TESTDATE_diff = c(0,diff(TIME_DXDATE_TESTDATE))/2,
+    TIME_DXDATE_TESTDATE_diff_lead = lead(TIME_DXDATE_TESTDATE_diff),
+    TIME_DXDATE_TESTDATE_interval = TIME_DXDATE_TESTDATE_diff + TIME_DXDATE_TESTDATE_diff_lead,
+    TIME_DXDATE_TESTDATE_interval_judge = TIME_DXDATE_TESTDATE_interval * VL_judge,
+    TIME_DXDATE_TESTDATE_interval_judge_sum = cumsum(TIME_DXDATE_TESTDATE_interval_judge),
+    TIME_DXDATE_TESTDATE_interval_sum = cumsum(TIME_DXDATE_TESTDATE_interval),
+    prop_time = TIME_DXDATE_TESTDATE_interval_judge_sum / TIME_DXDATE_TESTDATE_interval_sum
+  ) %>% 
+  select(-c(TIME_DXDATE_TESTDATE_diff,TIME_DXDATE_TESTDATE_diff_lead,TIME_DXDATE_TESTDATE_interval_judge,
+            TIME_DXDATE_TESTDATE_interval_judge_sum,TIME_DXDATE_TESTDATE_interval,
+            TIME_DXDATE_TESTDATE_interval_sum,VL_judge)) %>% 
+  slice(2:(n()-1))
+```
+
+
+```{r}
+# rm(cutoff_proptime,cutoff_VB_lower,cutoff_VB_upper,cutoff_VR,cutoff_VR2,cutoff_VS)
+# rm(DHEC_tests_VL_window)
+
+DHEC_tests_VL_window_cal
+```
+
+#### HIV care cascade factors
+
+```{r}
+# Var IV-1: linkage to care
+DHEC_tests_linkage <- DHEC_tests_CD4 %>% 
+    group_by(RFA_ID) %>% 
+    distinct(RFA_ID,.keep_all = T) %>% 
+    mutate(linkage_CD4 = ifelse(TIME_DXDATE_TESTDATE <= 30,1,0)) %>% 
+    full_join(
+        DHEC_tests_VL %>% 
+            group_by(RFA_ID) %>% 
+            distinct(RFA_ID,.keep_all = T) %>% 
+            mutate(linkage_VL = ifelse(TIME_DXDATE_TESTDATE <= 30,1,0)),
+        by = 'RFA_ID'
+    ) %>% 
+    mutate(
+      linkage_CD4 = ifelse(is.na(linkage_CD4),0,linkage_CD4),
+      linkage_VL = ifelse(is.na(linkage_VL),0,linkage_VL),
+      linkage = linkage_CD4 + linkage_VL,
+      linkage = ifelse(linkage >= 1,1,0)
+    ) %>% 
+    select(c(RFA_ID,linkage))
+```
+
+
+```{r}
+# Var IV-2: Retention in care
+# set time window
+time_window_month <- 12
+time_window_date <- time_window_month * 365/12
+time_window_date_year <- (12/time_window_month) * time_window_date
+
+retention <- DHEC_tests %>%
+    # select useful columns
+    select(RFA_ID, TEST, TEST_RESULTS, TESTDATE, TIME_DXDATE_TESTDATE) %>%
+    # Test should be 'VL', Test results should not be empty, Time should be > 0
+    filter(TEST_RESULTS != '',
+           TIME_DXDATE_TESTDATE >= 0,
+           TEST %in% c('VL','CD4#')) %>%
+    # change data format
+    mutate(TEST_RESULTS = as.numeric(TEST_RESULTS)) %>%
+    # select useful columns
+    select(RFA_ID, TIME_DXDATE_TESTDATE,TEST, TEST_RESULTS) %>%
+    # arrange
+    arrange(RFA_ID, TIME_DXDATE_TESTDATE)
+
+retention_s <- retention %>% 
+  group_by(RFA_ID) %>% 
+  mutate(
+    TIME_DXDATE_TESTDATE_min = min(TIME_DXDATE_TESTDATE),
+    time_window_index = floor((TIME_DXDATE_TESTDATE - TIME_DXDATE_TESTDATE_min) /
+                                  time_window_date) + 1,
+    time_window_index_year = floor((TIME_DXDATE_TESTDATE - TIME_DXDATE_TESTDATE_min) /
+                                  time_window_date_year) + 1
+  ) %>% 
+  group_by(RFA_ID,time_window_index_year) %>% 
+  summarise(
+    tm = min(TIME_DXDATE_TESTDATE),
+    td = max(TIME_DXDATE_TESTDATE),
+    t_range = td - tm,
+    retention = ifelse(t_range >= 90,1,0)
+  ) %>% 
+  select(RFA_ID,time_window_index_year,retention)
+
+retention.all <- DHEC_cases_clean %>%
+  select(RFA_ID,dx_yr,dx_mth,d_yr,d_mth) %>%
+  arrange(RFA_ID) %>%
+  mutate(
+    d_yr = ifelse(is.na(d_yr),2021,d_yr),# those who no die, set as  year 2021
+    d_mth = ifelse(is.na(d_mth),6,d_mth), # those who no die, set as month 6
+    dx = dx_yr + dx_mth/12,
+    d = d_yr + d_mth/12,
+    window_max = d - dx + 1/12,
+    window_max = floor(window_max)
+  )
+  
+
+DHEC_tests_retention <- data.frame(
+  RFA_ID = rep(retention.all$RFA_ID,retention.all$window_max)
+) %>% 
+  group_by(RFA_ID) %>% 
+  mutate(time_window_index_year = seq(length(RFA_ID))) %>% 
+  left_join(retention_s,by = c("RFA_ID","time_window_index_year")) %>% 
+  replace(is.na(.),0)# set time window
+
+DHEC_tests_retention %>% summary
+```
+
+```{r}
+# rm(retention,retention_s,retention.all,time_window_date,time_window_date_year,time_window_month)
+```
+
+
+#### County-level information
+
+```{r}
+# those obs do not have county info
+mean(DHEC_cases_clean$county == 'Others/Unknown')
+```
+
+```{r}
+library(openxlsx)
+path <- 'C:\\Users\\Yunqing\\OneDrive - University of South Carolina\\RO1_shared_folder\\Datasets\\County level\\'
+FIPS <- read.xlsx(paste0(path,'FIPS Codes.xlsx'))
+FIPS <- FIPS %>% mutate(
+  county = str_to_upper(county),
+  county = paste0(county,' CO.')
+)
+name <- c("FIPS","State","Total_Population","Female_Percentage","White_Percentage","Black_Percentage","High_School_and_more_Percentage_among_25_years_over_population","Unemployed_Percentage_among_16_years_over_population","Median_Household_Income","Gini_Index",'p_poverty','No_Health_Insurance_Coverage',"year")
+data_county <- read.csv(paste0(path,'2009.csv')) %>% mutate(p_poverty = NA,No_Health_Insurance_Coverage = NA,year = 2009) %>% set_names(name) %>%
+  rbind(read.csv(paste0(path,'2010.csv')) %>% mutate(No_Health_Insurance_Coverage=NA,year = 2010) %>% set_names(name)) %>%
+  rbind(read.csv(paste0(path,'2011.csv')) %>% mutate(No_Health_Insurance_Coverage=NA,year = 2011) %>% set_names(name)) %>%
+  rbind(read.csv(paste0(path,'2012.csv')) %>% mutate(year = 2012) %>% set_names(name)) %>%
+  rbind(read.csv(paste0(path,'2013.csv')) %>% mutate(year = 2013) %>% set_names(name)) %>%
+  rbind(read.csv(paste0(path,'2014.csv')) %>% mutate(year = 2014) %>% set_names(name)) %>%
+  rbind(read.csv(paste0(path,'2015.csv')) %>% mutate(year = 2015) %>% set_names(name)) %>%
+  rbind(read.csv(paste0(path,'2016.csv')) %>% mutate(year = 2016) %>% set_names(name)) %>%
+  rbind(read.csv(paste0(path,'2017.csv')) %>% mutate(year = 2017) %>% set_names(name)) %>%
+  rbind(read.csv(paste0(path,'2018.csv')) %>% mutate(year = 2018) %>% set_names(name)) %>%
+  rbind(read.csv(paste0(path,'2019.csv')) %>% mutate(year = 2019) %>% set_names(name)) %>%
+  rbind(read.csv(paste0(path,'2020.csv')) %>% mutate(year = 2020) %>% set_names(name)) %>%
+  arrange(year,FIPS)
+
+# fill NAs
+data_county$p_poverty[data_county$year==2009] <- data_county$p_poverty[data_county$year==2010]
+data_county$No_Health_Insurance_Coverage[data_county$year==2009] <- data_county$No_Health_Insurance_Coverage[data_county$year==2012]
+data_county$No_Health_Insurance_Coverage[data_county$year==2010] <- data_county$No_Health_Insurance_Coverage[data_county$year==2012]
+data_county$No_Health_Insurance_Coverage[data_county$year==2011] <- data_county$No_Health_Insurance_Coverage[data_county$year==2012]
+
+# rbind 2008 with copy of 2009
+data_county <- data_county %>%
+  rbind(data_county %>% filter(year == 2009) %>% mutate(year=2008))
+
+# New Diagnosis Rate
+f <- function(data){
+  res <- data %>% filter(State.Abbreviation %in% c('SC','RI')) %>% mutate(
+    FIPS = GEO.ID,
+    year = Year,
+    New_Diagnoses_Rate = New.Diagnoses.Rate
+  ) %>%
+    arrange(FIPS)
+  res$State.Abbreviation[res$GEO.ID == 45001] <- 'SC'
+  res$State.Abbreviation[res$GEO.ID == 46003] <- NA
+  res <- res %>%
+    filter(State.Abbreviation == 'SC') %>%
+    select(year,FIPS,New_Diagnoses_Rate)
+  return(res)
+}
+data_ndr <- read.xlsx(paste0(path,'AIDSVu_County_NewDX_2008.xlsx'),startRow = 4) %>% f() %>%
+  rbind(read.xlsx(paste0(path,'AIDSVu_County_NewDX_2009.xlsx'),startRow = 4) %>% f()) %>%
+  rbind(read.xlsx(paste0(path,'AIDSVu_County_NewDX_2010.xlsx'),startRow = 4) %>% f()) %>%
+  rbind(read.xlsx(paste0(path,'AIDSVu_County_NewDX_2011.xlsx'),startRow = 4) %>% f()) %>%
+  rbind(read.xlsx(paste0(path,'AIDSVu_County_NewDX_2012.xlsx'),startRow = 4) %>% f()) %>%
+  rbind(read.xlsx(paste0(path,'AIDSVu_County_NewDX_2013.xlsx'),startRow = 4) %>% f()) %>%
+  rbind(read.xlsx(paste0(path,'AIDSVu_County_NewDX_2014.xlsx'),startRow = 4) %>% f()) %>%
+  rbind(read.xlsx(paste0(path,'AIDSVu_County_NewDX_2015.xlsx'),startRow = 4) %>% f()) %>%
+  rbind(read.xlsx(paste0(path,'AIDSVu_County_NewDX_2016.xlsx'),startRow = 4) %>% f()) %>%
+  rbind(read.xlsx(paste0(path,'AIDSVu_County_NewDX_2017.xlsx'),startRow = 4) %>% f()) %>%
+  rbind(read.xlsx(paste0(path,'AIDSVu_County_NewDX_2018.xlsx'),startRow = 4) %>% f())
+table(data_ndr$New_Diagnoses_Rate[data_ndr$New_Diagnoses_Rate<0]) # all weird values are -1, set as 0
+data_ndr$New_Diagnoses_Rate[data_ndr$New_Diagnoses_Rate == -1] <- 0
+
+# County PrEP-to-Need Ratio
+f <- function(data){
+  data %>% filter(State.Abbreviation == 'SC') %>% mutate(
+    FIPS = GEO.ID,
+    year = Year,
+    PrEP_to_Need_Ratio = `County.PrEP-to-Need.Ratio`
+  ) %>%
+    select(year,FIPS,PrEP_to_Need_Ratio) %>%
+    arrange(FIPS)
+}
+data_pnr <- read.xlsx(paste0(path,'AIDSVu_County_PNR_2012.xlsx'),startRow = 4) %>% f() %>%
+  rbind(read.xlsx(paste0(path,'AIDSVu_County_PNR_2013.xlsx'),startRow = 4) %>% f()) %>%
+  rbind(read.xlsx(paste0(path,'AIDSVu_County_PNR_2014.xlsx'),startRow = 4) %>% f()) %>%
+  rbind(read.xlsx(paste0(path,'AIDSVu_County_PNR_2015.xlsx'),startRow = 4) %>% f()) %>%
+  rbind(read.xlsx(paste0(path,'AIDSVu_County_PNR_2016.xlsx'),startRow = 4) %>% f()) %>%
+  rbind(read.xlsx(paste0(path,'AIDSVu_County_PNR_2017.xlsx'),startRow = 4) %>% f()) %>%
+  rbind(read.xlsx(paste0(path,'AIDSVu_County_PNR_2018.xlsx'),startRow = 4) %>% f())
+table(data_pnr$PrEP_to_Need_Ratio[data_pnr$PrEP_to_Need_Ratio<0]) # all weird values are -1, set as 0
+data_pnr$PrEP_to_Need_Ratio[data_pnr$PrEP_to_Need_Ratio == -1] <- 0
+
+# health dataset
+data_health <- read.csv(paste0(path,'health.csv')) %>%
+  select(fips,year,pcp_rate) %>%
+  rename(FIPS = fips) %>%
+  group_by(FIPS) %>%
+  fill(pcp_rate,.direction = 'downup')
+
+# SVI dataset
+data_svi <- read.csv(paste0(path,'svi.csv'))
+data_svi <- data_svi[,-(1:3)]
+
+# combind all county level variables
+data_county <- data_county %>%
+  full_join(data_ndr,by = c('year','FIPS')) %>%
+  full_join(data_pnr,by = c('year','FIPS')) %>%
+  full_join(data_health,by = c('year','FIPS')) %>%
+  left_join(data_svi,by = c('FIPS')) %>%
+  arrange(year,FIPS)
+
+# fill NAs
+data_county$PrEP_to_Need_Ratio[data_county$year==2005] <- data_county$PrEP_to_Need_Ratio[data_county$year==2012]
+data_county$PrEP_to_Need_Ratio[data_county$year==2006] <- data_county$PrEP_to_Need_Ratio[data_county$year==2012]
+data_county$PrEP_to_Need_Ratio[data_county$year==2007] <- data_county$PrEP_to_Need_Ratio[data_county$year==2012]
+data_county$PrEP_to_Need_Ratio[data_county$year==2008] <- data_county$PrEP_to_Need_Ratio[data_county$year==2012]
+data_county$PrEP_to_Need_Ratio[data_county$year==2009] <- data_county$PrEP_to_Need_Ratio[data_county$year==2012]
+data_county$PrEP_to_Need_Ratio[data_county$year==2010] <- data_county$PrEP_to_Need_Ratio[data_county$year==2012]
+data_county$PrEP_to_Need_Ratio[data_county$year==2011] <- data_county$PrEP_to_Need_Ratio[data_county$year==2012]
+data_county$PrEP_to_Need_Ratio[data_county$year==2019] <- data_county$PrEP_to_Need_Ratio[data_county$year==2018]
+data_county$PrEP_to_Need_Ratio[data_county$year==2020] <- data_county$PrEP_to_Need_Ratio[data_county$year==2018]
+data_county$New_Diagnoses_Rate[data_county$year==2005] <- data_county$New_Diagnoses_Rate[data_county$year==2008]
+data_county$New_Diagnoses_Rate[data_county$year==2006] <- data_county$New_Diagnoses_Rate[data_county$year==2008]
+data_county$New_Diagnoses_Rate[data_county$year==2007] <- data_county$New_Diagnoses_Rate[data_county$year==2008]
+data_county$New_Diagnoses_Rate[data_county$year==2019] <- data_county$New_Diagnoses_Rate[data_county$year==2018]
+data_county$New_Diagnoses_Rate[data_county$year==2020] <- data_county$New_Diagnoses_Rate[data_county$year==2018]
+data_county$pcp_rate[data_county$year==2019] <- data_county$pcp_rate[data_county$year==2018]
+data_county$pcp_rate[data_county$year==2020] <- data_county$pcp_rate[data_county$year==2018]
+
+# select useful variables
+data_county <- data_county %>%
+  select(FIPS,State,year,New_Diagnoses_Rate,PrEP_to_Need_Ratio,pcp_rate,RPL_THEME1,RPL_THEME2,RPL_THEME3,RPL_THEME4,RPL_THEMES)
+
+data_county
+```
+
+```{r}
+DHEC_cases_county <- DHEC_cases_clean %>% 
+  dplyr::select(RFA_ID,dx_yr,county) %>% 
+  left_join(FIPS,by = 'county') %>% 
+  mutate(
+    dx_yr = case_when(
+      dx_yr < 2005 ~ 2005,
+      dx_yr > 2020 ~ 2020,
+      TRUE ~ dx_yr
+    )
+  ) %>% 
+  left_join(data_county,by = c('FIPS','dx_yr'='year')) %>%
+  dplyr::select(-c(dx_yr,FIPS,State))
+
+DHEC_cases_county # NA due to county 'Other/Unknown'
+```
+
+#### Read County-level SDOH data
+
+```{r}
+all_county_data <- readxl::read_xlsx("C:\\Users\\Yunqing\\OneDrive - University of South Carolina\\Research\\County-level social determinants of health with VS and RIC\\SDOH 0716\\all_county_data.xlsx")
+data_dict_distinct <- readxl::read_xlsx("C:\\Users\\Yunqing\\OneDrive - University of South Carolina\\Research\\County-level social determinants of health with VS and RIC\\SDOH 0716\\data_dict_distinct.xlsx")
+
+all_county_data <- all_county_data %>%
+    mutate(COUNTY = toupper(stringr::word(COUNTY, 1))) %>%
+    rename(county = COUNTY) %>%
+    dplyr::select(-c(STATEFIPS, STATE, REGION, TERRITORY))
+all_county_data
+```
+
+```{r}
+# Check which columns contain no missing values
+columns_no_missing <- colSums(is.na(all_county_data)) == 0
+
+# Get the names of these columns
+columns_without_na <- names(all_county_data)[columns_no_missing]
+
+# Display the column names without missing values
+columns_without_na
+columns_without_na %>% length()
+
+all_county_data <- all_county_data %>% dplyr::select(columns_without_na)
+all_county_data
+```
+
+```{r}
+# select only continuous variables
+data_county2 <- all_county_data %>%
+    dplyr::select(-c(intersect(colnames(all_county_data), data_dict_distinct$name[data_dict_distinct$type == "char"]))) %>%
+    rename(year = YEAR)
+data_county2$FIPS <- all_county_data$COUNTYFIPS %>% as.numeric()
+data_county2
+```
+
+```{r}
+DHEC_cases_county2 <- DHEC_cases_clean %>% 
+  select(RFA_ID,dx_yr,county) %>% 
+  left_join(FIPS,by = 'county') %>% 
+  mutate(
+    dx_yr = case_when(
+      dx_yr < 2005 ~ 2005,
+      dx_yr > 2020 ~ 2020,
+      TRUE ~ dx_yr
+    )
+  ) %>% 
+  left_join(data_county2,by = c('FIPS','dx_yr'='year'))
+  # select(-c(dx_yr,FIPS,State))
+
+DHEC_cases_county2 # NA due to county 'Other/Unknown'
+DHEC_cases_county2 %>% filter(dx_yr == 2009)
+```
+
+```{r}
+
+```
+
+```{r}
+# rm(FIPS,f,name,path,data_county,data_health,data_ndr,data_pnr,data_svi)
+```
+
+#### Combine and join all source of data
+
+```{r}
+load('ICD.comorbidity.pro.rda')
+load('ICD.mental.rda')
+ICD.comorbidity <- ICD.comorbidity.pro
+# rm(ICD.comorbidity.pro)
+colnames(ICD.mental)[5:8] <- c("Psychiatric_disorder", "Alcohol_use",
+                               "Tobacco_use","Illicit_drug_use")
+```
+
+
+```{r}
+DHEC_tests_final <- DHEC_tests_VL_window_cal %>% 
+  left_join(DHEC_cases_clean_demo,by = 'RFA_ID') %>% 
+  left_join(DHEC_tests_baseline,by = 'RFA_ID') %>% 
+  left_join(DHEC_tests_linkage,by = 'RFA_ID') %>% 
+  left_join(DHEC_tests_retention,by = c('RFA_ID','time_window_index_year')) %>% 
+  left_join(ICD.comorbidity %>% select(-age),by = c('RFA_ID','time_window_index')) %>% 
+  left_join(ICD.mental,by = c('RFA_ID','time_window_index')) %>% 
+  left_join(DHEC_cases_county,by = 'RFA_ID') %>% 
+  left_join(data_visits,by = c('RFA_ID','time_window_index'))
+
+# set those who never have a comorbidity or mental ICD as all 0
+DHEC_tests_final <- DHEC_tests_final %>% 
+  mutate(
+    # comor
+    mi = ifelse(is.na((mi)),0,mi),
+    chf = ifelse(is.na((chf)),0,chf),
+    pvd = ifelse(is.na((pvd)),0,pvd),
+    cevd = ifelse(is.na((cevd)),0,cevd),
+    dementia = ifelse(is.na((dementia)),0,dementia),
+    cpd = ifelse(is.na((cpd)),0,cpd),
+    rheumd = ifelse(is.na((rheumd)),0,rheumd),
+    pud = ifelse(is.na((pud)),0,pud),
+    mld = ifelse(is.na((mld)),0,mld),
+    diab = ifelse(is.na((diab)),0,diab),
+    diabwc = ifelse(is.na((diabwc)),0,diabwc),
+    hp = ifelse(is.na((hp)),0,hp),
+    rend = ifelse(is.na((rend)),0,rend),
+    canc = ifelse(is.na((canc)),0,canc),
+    msld = ifelse(is.na((msld)),0,msld),
+    metacanc = ifelse(is.na((metacanc)),0,metacanc),
+    aids = ifelse(is.na((aids)),0,aids),
+    
+    mi.cum = ifelse(is.na((mi.cum)),0,mi.cum),
+    chf.cum = ifelse(is.na((chf.cum)),0,chf.cum),
+    pvd.cum = ifelse(is.na((pvd.cum)),0,pvd.cum),
+    cevd.cum = ifelse(is.na((cevd.cum)),0,cevd.cum),
+    dementia.cum = ifelse(is.na((dementia.cum)),0,dementia.cum),
+    cpd.cum = ifelse(is.na((cpd.cum)),0,cpd.cum),
+    rheumd.cum = ifelse(is.na((rheumd.cum)),0,rheumd.cum),
+    pud.cum = ifelse(is.na((pud.cum)),0,pud.cum),
+    mld.cum = ifelse(is.na((mld.cum)),0,mld.cum),
+    diab.cum = ifelse(is.na((diab.cum)),0,diab.cum),
+    diabwc.cum = ifelse(is.na((diabwc.cum)),0,diabwc.cum),
+    hp.cum = ifelse(is.na((hp.cum)),0,hp.cum),
+    rend.cum = ifelse(is.na((rend.cum)),0,rend.cum),
+    canc.cum = ifelse(is.na((canc.cum)),0,canc.cum),
+    msld.cum = ifelse(is.na((msld.cum)),0,msld.cum),
+    metacanc.cum = ifelse(is.na((metacanc.cum)),0,metacanc.cum),
+    aids.cum = ifelse(is.na((aids.cum)),0,aids.cum),
+    # mental
+    Depression = ifelse(is.na((Depression)),0,Depression),
+    Anxiety = ifelse(is.na((Anxiety)),0,Anxiety),
+    Psychiatric_disorder = ifelse(is.na((Psychiatric_disorder)),0,Psychiatric_disorder),
+    Alcohol_use = ifelse(is.na((Alcohol_use)),0,Alcohol_use),
+    Tobacco_use = ifelse(is.na((Tobacco_use)),0,Tobacco_use),
+    Illicit_drug_use = ifelse(is.na((Illicit_drug_use)),0,Illicit_drug_use)
+  )
+```
+
+
+```{r}
+DHEC_tests_final <- DHEC_tests_final %>% 
+  # remove those who dx_yr is NA. They died before diagnosis (ref to DHEC_cases_clean step)
+  filter(!is.na(dx_yr)) %>% 
+  # remove those who county is unkown/others
+  filter(!county == 'Others/Unknown') %>% 
+  # (remove those who never suppress)
+  filter(!is.infinite(Months_to_ini_VS))
+  
+# comments on NA values
+# 1. CD4_baseline_interpretation and CD4_baseline: some patients have no CD4 test at all, hence no baseline value. Those obs can be removed from modeling
+DHEC_tests_final <- DHEC_tests_final %>% filter(!is.na(CD4_baseline))
+# 2. retention have 2121 NAs since patients didn't experience a whole follow up year, so retention can not be well-defined. Those obs may be removed from modeling
+DHEC_tests_final <- DHEC_tests_final %>% filter(!is.na(retention))
+# 3. prop_time have 16 NaN since patient only had one visit so 0/0 = NaN. Hence replace them as 0
+DHEC_tests_final <- DHEC_tests_final %>% mutate(prop_time = ifelse(is.nan(prop_time),0,prop_time))
+
+is.na(DHEC_tests_final) %>% sum()
+is.na(DHEC_tests_final) %>% apply(2, sum) %>% t()
+
+DHEC_tests_final %>% select(dx_yr.x, dx_yr.y)
+```
+
+```{r}
+# rm(DHEC_tests_VL_window_cal,DHEC_cases_clean_demo,DHEC_tests_baseline,
+#    DHEC_tests_linkage,DHEC_tests_retention)
+```
+
+```{r}
+save(DHEC_tests_final, file = "DHEC_tests_final.rda")
+load("DHEC_tests_final.rda")
+DHEC_tests_final
+```
+
+```{r}
+# cohort restrictions
+DHEC_tests_final_cohort <- DHEC_tests_final %>%
+  ungroup() %>%
+  mutate(
+    dx_date = paste0(dx_yr,'-',dx_mth,'-','15') %>% as.Date(),
+    test_date = dx_date + TIME_DXDATE_TESTDATE
+  )
+sum(DHEC_tests_final_cohort$test_date < as.Date('2005-01-01')) # ?? tests before 2005
+sum((DHEC_tests_final_cohort %>% distinct(RFA_ID,.keep_all = T))$age < 18) # ?? patients < 18 years old
+DHEC_tests_final_cohort <- DHEC_tests_final_cohort %>% 
+  filter(
+    age >= 18,
+    test_date >= as.Date('2005-01-01')
+  )
+
+DHEC_tests_final_cohort %>% nrow()
+DHEC_tests_final_cohort %>% distinct(RFA_ID) %>% nrow()
+```
+
+```{r}
+writexl::write_xlsx(DHEC_tests_final_cohort, 'DHEC_tests_final_cohort.xlsx')
+```
+
+```{r}
+DHEC_tests_final_lag1 <- DHEC_tests_final_cohort %>%
+  ungroup() %>%
+  dplyr::select(RFA_ID, TIME_DXDATE_TESTDATE, time_window_index_year, VL_interpretation, VL, VS, VS_sum,
+                VR, VB, Months_to_ini_VS, VR_N, VR_size, prop_time, dx_yr, dx_mth, age, sex, race, risk, region,
+                CD4_baseline_interpretation, CD4_baseline, VL_baseline_interpretation, VL_baseline, linkage, retention,
+                mi, chf, pvd, cevd, dementia, cpd, rheumd, pud, mld, diab, diabwc, hp, rend, canc, msld, metacanc, aids,
+                mi.cum, chf.cum, pvd.cum, cevd.cum, dementia.cum, cpd.cum, rheumd.cum, pud.cum, mld.cum,
+                diab.cum, diabwc.cum, hp.cum, rend.cum, canc.cum, msld.cum, metacanc.cum, aids.cum,
+                Depression, Anxiety, Psychiatric_disorder, Alcohol_use, Tobacco_use, Illicit_drug_use,
+                county, New_Diagnoses_Rate, PrEP_to_Need_Ratio, pcp_rate, RPL_THEME1, RPL_THEME2, RPL_THEME3, RPL_THEME4, RPL_THEMES, visits)
+
+DHEC_tests_final_rename <- DHEC_tests_final_lag1
+colnames(DHEC_tests_final_rename)[4:76] <- paste0(colnames(DHEC_tests_final_rename)[4:76], "_1")
+DHEC_tests_final_rename
+```
+
+```{r}
+DHEC_tests_final_lag1 <- DHEC_tests_final_lag1 %>%
+  mutate(time_window_index_year_lag1 = time_window_index_year - 1) %>%
+  left_join(., DHEC_tests_final_rename %>% dplyr::select(-TIME_DXDATE_TESTDATE),
+            by = c("RFA_ID", "time_window_index_year_lag1" = "time_window_index_year")) %>%
+  # dplyr::select(RFA_ID, time_window_index_year, time_window_index_year_lag1, VS, VS_1) %>%
+  dplyr::select(-c(time_window_index_year_lag1, county_1:RPL_THEMES_1, dx_yr_1:region_1, CD4_baseline_interpretation_1:VL_baseline_1, CD4_baseline_interpretation, VL_interpretation_1, VS_sum, VS_sum_1)) %>%
+  na.omit()
+
+DHEC_tests_final_lag1
+```
+
+```{r}
+save(DHEC_tests_final_cohort, DHEC_tests_final_lag1, file = 'data_output.rda')
+writexl::write_xlsx(DHEC_tests_final_lag1, 'DHEC_tests_final_lag1.xlsx')
+```
+
+```{r}
+DHEC_tests_final_cohort$RFA_ID %>% unique() %>% length
+DHEC_tests_final_lag1$VS %>% table
+DHEC_tests_final_lag1$VR %>% table
+DHEC_tests_final_lag1$VB %>% table
+DHEC_tests_final_lag1$retention %>% table
+DHEC_tests_final_lag1$linkage %>% table
+```
+
+```{r}
+load("data_output.rda")
+DHEC_tests_final_cohort
+DHEC_tests_final_lag1
+
+writexl::write_xlsx(data.frame("variables" = DHEC_tests_final_lag1 %>% colnames()), "1204variables.xlsx")
+```
+
+## Logistics regression
+
+```{r}
+library(pROC)
+```
+
+```{r}
+DHEC_tests_final_lag1$VS %>% mean()
+DHEC_tests_final_lag1$retention %>% mean()
+DHEC_tests_final_lag1$VB %>% mean()
+DHEC_tests_final_lag1$VR %>% mean()
+```
+
+```{r}
+sample_size <- floor(0.8 * nrow(DHEC_tests_final_lag1))
+set.seed(123)
+train_indices <- sample(seq_len(nrow(DHEC_tests_final_lag1)), size = sample_size)
+
+train_data <- DHEC_tests_final_lag1[train_indices, ]
+test_data <- DHEC_tests_final_lag1[-train_indices, ]
+```
+
+```{r}
+log_reg_VS <- glm(VS ~ . - RFA_ID - VR - VB, data = train_data, family = binomial)
+
+pred_probs <- predict(log_reg_VS, newdata = test_data, type = "response")
+
+mean(as.numeric(pred_probs > 0.5) == test_data$VS)
+
+roc_obj <- roc(test_data$VS, pred_probs)
+auc(roc_obj)
+```
+
+```{r}
+log_reg_ric <- glm(retention ~ . - RFA_ID - VS, data = train_data, family = binomial)
+
+pred_probs <- predict(log_reg_ric, newdata = test_data, type = "response")
+
+mean(as.numeric(pred_probs > 0.5) == test_data$retention)
+
+roc_obj <- roc(test_data$retention, pred_probs)
+auc(roc_obj)
+```
+
+
+
+
+
+
